@@ -9,7 +9,8 @@ from app.telemetry import (
     start_mqtt,
     stop_mqtt,
     get_latest_readings,
-    get_reading_history
+    get_reading_history,
+    get_alert_history
 )
 
 from app.websocket_manager import manager
@@ -65,6 +66,10 @@ async def telemetry_history():
 
     return get_reading_history()
 
+@app.get("/alerts")
+async def alert_history():
+
+    return get_alert_history()
 
 @app.websocket("/ws/telemetry")
 async def telemetry_websocket(websocket: WebSocket):
@@ -80,3 +85,17 @@ async def telemetry_websocket(websocket: WebSocket):
     except WebSocketDisconnect:
 
         manager.disconnect(websocket)
+@app.websocket("/ws/alerts")
+async def alerts_websocket(websocket: WebSocket):
+
+    await manager.connect_alert(websocket)
+
+    try:
+
+        while True:
+
+            await websocket.receive_text()
+
+    except WebSocketDisconnect:
+
+        manager.disconnect_alert(websocket)

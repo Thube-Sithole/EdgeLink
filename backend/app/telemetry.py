@@ -4,13 +4,20 @@ import logging
 import threading
 
 from collections import deque
-from datetime import datetime, timezone
 
 import paho.mqtt.client as mqtt
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+)
 
+from app.alert_engine import evaluate_reading
 from app.websocket_manager import manager
+
+
 # --------------------------------------------------
 # Configuration
 # --------------------------------------------------
@@ -21,7 +28,9 @@ PORT = 1883
 TOPIC = "edgelink/factory-01/machine-01/telemetry"
 
 KEEPALIVE = 60
+
 HISTORY_LIMIT = 100
+ALERT_HISTORY_LIMIT = 100
 
 
 # --------------------------------------------------
@@ -52,16 +61,18 @@ class TelemetryReading(BaseModel):
 
     vibration: float = Field(ge=0, le=100)
 
-    timestamp: datetime
+    timestamp: str
 
 
 # --------------------------------------------------
-# In-memory telemetry storage
+# In-memory storage
 # --------------------------------------------------
 
 latest_readings = {}
 
 reading_history = deque(maxlen=HISTORY_LIMIT)
+
+alert_history = deque(maxlen=ALERT_HISTORY_LIMIT)
 
 data_lock = threading.Lock()
 
@@ -84,8 +95,14 @@ lifecycle_lock = threading.Lock()
 def on_connect(client, userdata, flags, reason_code, properties):
 
     if reason_code != 0:
+
         mqtt_connected.clear()
-        logger.error("MQTT connection rejected: %s", reason_code)
+
+        logger.error(
+            "MQTT connection rejected: %s",
+            reason_code
+        )
+
         return
 
     mqtt_connected.set()
@@ -95,9 +112,18 @@ def on_connect(client, userdata, flags, reason_code, properties):
     result, message_id = client.subscribe(TOPIC, qos=1)
 
     if result == mqtt.MQTT_ERR_SUCCESS:
-        logger.info("Subscribed to topic: %s", TOPIC)
+
+        logger.info(
+            "Subscribed to topic: %s",
+            TOPIC
+        )
+
     else:
-        logger.error("Failed to subscribe: %s", result)
+
+        logger.error(
+            "Failed to subscribe: %s",
+            result
+        )
 
 
 def on_disconnect(client, userdata, disconnect_flags, reason_code, properties):
@@ -105,32 +131,71 @@ def on_disconnect(client, userdata, disconnect_flags, reason_code, properties):
     mqtt_connected.clear()
 
     if reason_code != 0:
+
         logger.warning(
             "Unexpected MQTT disconnection: %s",
             reason_code
         )
+
     else:
+
         logger.info("MQTT disconnected")
 
 
 def on_message(client, userdata, message):
 
     try:
+
+        # Decode incoming MQTT payload.
         payload = message.payload.decode("utf-8")
 
         raw_reading = json.loads(payload)
 
+        # Validate telemetry.
         reading = TelemetryReading.model_validate(raw_reading)
 
         validated_reading = reading.model_dump(mode="json")
+
+        # ------------------------------------------
+        # Store telemetry
+        # ------------------------------------------
 
         with data_lock:
 
             latest_readings[reading.machine_id] = validated_reading
 
             reading_history.append(validated_reading)
-        
+
+        # ------------------------------------------
+        # Broadcast telemetry
+        # ------------------------------------------
+
         manager.broadcast_from_thread(validated_reading)
+
+        # ------------------------------------------
+        # Evaluate equipment thresholds
+        # ------------------------------------------
+
+        generated_alerts = evaluate_reading(validated_reading)
+
+        # ------------------------------------------
+        # Store and broadcast alerts
+        # ------------------------------------------
+
+        for alert in generated_alerts:
+
+            with data_lock:
+
+                alert_history.append(alert)
+
+            manager.broadcast_alert_from_thread(alert)
+
+            logger.warning(
+                "Equipment alert | Machine: %s | Metric: %s | Severity: %s",
+                alert["machine_id"],
+                alert["metric"],
+                alert["severity"]
+            )
 
         logger.info(
             "Telemetry received from %s",
@@ -139,11 +204,23 @@ def on_message(client, userdata, message):
 
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
 
-        logger.warning("Invalid JSON telemetry: %s", error)
+        logger.warning(
+            "Invalid JSON telemetry: %s",
+            error
+        )
 
     except ValidationError as error:
 
-        logger.warning("Telemetry validation failed: %s", error)
+        logger.warning(
+            "Telemetry validation failed: %s",
+            error
+        )
+
+    except Exception:
+
+        logger.exception(
+            "Unexpected error processing MQTT telemetry"
+        )
 
 
 # --------------------------------------------------
@@ -156,8 +233,11 @@ mqtt_client = mqtt.Client(
 )
 
 mqtt_client.on_connect = on_connect
+
 mqtt_client.on_disconnect = on_disconnect
+
 mqtt_client.on_message = on_message
+
 
 # Automatically retry connections after unexpected disconnects.
 mqtt_client.reconnect_delay_set(
@@ -177,7 +257,11 @@ def start_mqtt():
     with lifecycle_lock:
 
         if mqtt_started:
-            logger.warning("MQTT client is already running")
+
+            logger.warning(
+                "MQTT client is already running"
+            )
+
             return
 
         mqtt_started = True
@@ -198,7 +282,9 @@ def start_mqtt():
 
             mqtt_started = False
 
-            logger.exception("Failed to start MQTT client")
+            logger.exception(
+                "Failed to start MQTT client"
+            )
 
             raise
 
@@ -230,10 +316,23 @@ def stop_mqtt():
 def get_latest_readings():
 
     with data_lock:
+
         return dict(latest_readings)
 
 
 def get_reading_history():
 
     with data_lock:
+
         return list(reading_history)
+
+
+# --------------------------------------------------
+# Alert access functions
+# --------------------------------------------------
+
+def get_alert_history():
+
+    with data_lock:
+
+        return list(alert_history)

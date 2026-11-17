@@ -1,4 +1,3 @@
-
 import {
   Activity,
   LayoutDashboard,
@@ -13,9 +12,22 @@ import {
 
 import "./App.css";
 import { useTelemetry } from "./hooks/useTelemetry";
+import TelemetryChart from "./components/TelemetryChart";
+
+import {
+  Thermometer,
+  Gauge,
+} from "lucide-react";
+
+import MetricCard from "./components/MetricCard";
+import { useAnalytics } from "./hooks/useAnalytics";
 
 function App() {
   const { latest, history, connected } = useTelemetry();
+  
+  const temperature = useAnalytics(history, "temperature");
+  const pressure = useAnalytics(history, "pressure");
+  const vibration = useAnalytics(history, "vibration");
 
   return (
     <div className="dashboard">
@@ -88,7 +100,6 @@ function App() {
           <div className="topbar-actions">
             <div className="connection-status">
               <Wifi size={16} />
-
               <span>
                 {connected
                   ? "WebSocket connected"
@@ -106,7 +117,7 @@ function App() {
           </div>
         </header>
 
-        {/* WELCOME SECTION */}
+        {/* WELCOME */}
         <section className="welcome-section">
           <div>
             <p className="eyebrow">
@@ -129,31 +140,21 @@ function App() {
         {/* OVERVIEW CARDS */}
         <section className="overview-grid">
 
-          {/* Connected Machines */}
           <div className="overview-card">
             <div className="card-icon cyan">
               <Factory size={21} />
             </div>
-
             <p>Connected machines</p>
-
             <h3>01 <span>/ 01</span></h3>
-
             <small>All registered equipment online</small>
           </div>
 
-          {/* Telemetry Status */}
           <div className="overview-card">
             <div className="card-icon violet">
               <Activity size={21} />
             </div>
-
             <p>Telemetry status</p>
-
-            <h3>
-              {connected && latest ? "LIVE" : "WAITING"}
-            </h3>
-
+            <h3>{connected && latest ? "LIVE" : "WAITING"}</h3>
             <small>
               {latest
                 ? `Receiving data from ${latest.machine_id}`
@@ -161,37 +162,82 @@ function App() {
             </small>
           </div>
 
-          {/* Communication */}
           <div className="overview-card">
             <div className="card-icon lime">
               <Wifi size={21} />
             </div>
-
             <p>Communication</p>
-
             <h3>MQTT</h3>
-
             <small>Industrial messaging protocol</small>
           </div>
 
-          {/* Active Alerts */}
           <div className="overview-card">
             <div className="card-icon amber">
               <Zap size={21} />
             </div>
-
             <p>Active alerts</p>
-
             <h3>00</h3>
-
             <small>No alerts registered yet</small>
           </div>
 
         </section>
 
+{/* INTELLIGENT METRIC CARDS */}
+
+<section className="analytics-section">
+
+  <div className="section-heading">
+    <div>
+      <h2>Equipment Performance</h2>
+      <p>Live sensor metrics and statistical analysis</p>
+    </div>
+  </div>
+
+  <div className="metric-grid">
+
+    <MetricCard
+      title="Temperature"
+      value={temperature.current}
+      unit="°C"
+      minimum={temperature.minimum}
+      maximum={temperature.maximum}
+      average={temperature.average}
+      trend={temperature.trend}
+      color="#00D4FF"
+      icon={<Thermometer size={22} />}
+    />
+
+    <MetricCard
+      title="Pressure"
+      value={pressure.current}
+      unit="kPa"
+      minimum={pressure.minimum}
+      maximum={pressure.maximum}
+      average={pressure.average}
+      trend={pressure.trend}
+      color="#A855F7"
+      icon={<Gauge size={22} />}
+    />
+
+    <MetricCard
+      title="Vibration"
+      value={vibration.current}
+      unit="units"
+      minimum={vibration.minimum}
+      maximum={vibration.maximum}
+      average={vibration.average}
+      trend={vibration.trend}
+      color="#A3E635"
+      icon={<Activity size={22} />}
+    />
+
+  </div>
+
+</section>
+
+
         {/* LIVE TELEMETRY */}
         <section className="content-placeholder telemetry-live">
-
           <div>
             <h3>Live machine telemetry</h3>
 
@@ -200,7 +246,6 @@ function App() {
                 <p>Machine: {latest.machine_id}</p>
 
                 <div className="live-readings">
-
                   <div>
                     <span>Temperature</span>
                     <strong>
@@ -221,7 +266,6 @@ function App() {
                       {latest.vibration.toFixed(2)}
                     </strong>
                   </div>
-
                 </div>
 
                 <p className="last-updated">
@@ -241,7 +285,47 @@ function App() {
           </div>
 
           <Activity size={36} />
+        </section>
 
+        {/* LIVE ANALYTICS */}
+        <section className="analytics-section">
+          <div className="section-heading">
+            <div>
+              <h2>Sensor Analytics</h2>
+              <p>Real-time industrial telemetry trends</p>
+            </div>
+
+            <div className="live-indicator">
+              <span className="status-dot" />
+              LIVE DATA
+            </div>
+          </div>
+
+          <div className="chart-grid">
+            <TelemetryChart
+              title="Temperature"
+              dataKey="temperature"
+              color="#00D4FF"
+              unit="°C"
+              readings={history}
+            />
+
+            <TelemetryChart
+              title="Pressure"
+              dataKey="pressure"
+              color="#A855F7"
+              unit="kPa"
+              readings={history}
+            />
+
+            <TelemetryChart
+              title="Vibration"
+              dataKey="vibration"
+              color="#A3E635"
+              unit="units"
+              readings={history}
+            />
+          </div>
         </section>
 
       </main>
