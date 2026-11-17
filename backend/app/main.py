@@ -1,6 +1,9 @@
+
+import asyncio
+
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from app.telemetry import (
     start_mqtt,
@@ -9,12 +12,21 @@ from app.telemetry import (
     get_reading_history
 )
 
+from app.websocket_manager import manager
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+
+    manager.set_event_loop(asyncio.get_running_loop())
+
     start_mqtt()
+
     yield
+
     stop_mqtt()
+
+    manager.set_event_loop(None)
 
 
 app = FastAPI(
@@ -27,6 +39,7 @@ app = FastAPI(
 
 @app.get("/")
 async def root():
+
     return {
         "application": "EdgeLink",
         "status": "online"
@@ -35,6 +48,7 @@ async def root():
 
 @app.get("/health")
 async def health_check():
+
     return {
         "status": "healthy"
     }
@@ -42,9 +56,27 @@ async def health_check():
 
 @app.get("/telemetry/latest")
 async def latest_telemetry():
+
     return get_latest_readings()
 
 
 @app.get("/telemetry/history")
 async def telemetry_history():
+
     return get_reading_history()
+
+
+@app.websocket("/ws/telemetry")
+async def telemetry_websocket(websocket: WebSocket):
+
+    await manager.connect(websocket)
+
+    try:
+
+        while True:
+
+            await websocket.receive_text()
+
+    except WebSocketDisconnect:
+
+        manager.disconnect(websocket)
