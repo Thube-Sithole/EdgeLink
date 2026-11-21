@@ -1,5 +1,7 @@
 
+import os
 import json
+import ssl
 import logging
 import threading
 
@@ -18,24 +20,37 @@ from app.alert_engine import evaluate_reading
 from app.websocket_manager import manager
 
 
-# --------------------------------------------------
-# Configuration
-# --------------------------------------------------
+# ==================================================
+# CONFIGURATION
+# ==================================================
 
-BROKER = "localhost"
-PORT = 1883
+BROKER = os.getenv("MQTT_BROKER_HOST", "localhost")
 
-TOPIC = "edgelink/factory-01/machine-01/telemetry"
+PORT = int(os.getenv("MQTT_BROKER_PORT", "1883"))
+
+MQTT_USERNAME = os.getenv("MQTT_USERNAME")
+
+MQTT_PASSWORD = os.getenv("MQTT_PASSWORD")
+
+MQTT_USE_TLS = (
+    os.getenv("MQTT_USE_TLS", "false").lower() == "true"
+)
+
+TOPIC = os.getenv(
+    "MQTT_TOPIC",
+    "edgelink/factory-01/machine-01/telemetry"
+)
 
 KEEPALIVE = 60
 
 HISTORY_LIMIT = 100
+
 ALERT_HISTORY_LIMIT = 100
 
 
-# --------------------------------------------------
-# Logging
-# --------------------------------------------------
+# ==================================================
+# LOGGING
+# ==================================================
 
 logging.basicConfig(
     level=logging.INFO,
@@ -45,28 +60,40 @@ logging.basicConfig(
 logger = logging.getLogger("edgelink.telemetry")
 
 
-# --------------------------------------------------
-# Telemetry data model
-# --------------------------------------------------
+# ==================================================
+# TELEMETRY DATA MODEL
+# ==================================================
 
 class TelemetryReading(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    machine_id: str = Field(min_length=1, max_length=100)
+    machine_id: str = Field(
+        min_length=1,
+        max_length=100
+    )
 
-    temperature: float = Field(ge=-50, le=200)
+    temperature: float = Field(
+        ge=-50,
+        le=200
+    )
 
-    pressure: float = Field(gt=0, le=500)
+    pressure: float = Field(
+        gt=0,
+        le=500
+    )
 
-    vibration: float = Field(ge=0, le=100)
+    vibration: float = Field(
+        ge=0,
+        le=100
+    )
 
     timestamp: str
 
 
-# --------------------------------------------------
-# In-memory storage
-# --------------------------------------------------
+# ==================================================
+# IN-MEMORY STORAGE
+# ==================================================
 
 latest_readings = {}
 
@@ -77,9 +104,9 @@ alert_history = deque(maxlen=ALERT_HISTORY_LIMIT)
 data_lock = threading.Lock()
 
 
-# --------------------------------------------------
-# MQTT connection state
-# --------------------------------------------------
+# ==================================================
+# MQTT CONNECTION STATE
+# ==================================================
 
 mqtt_connected = threading.Event()
 
@@ -88,11 +115,17 @@ mqtt_started = False
 lifecycle_lock = threading.Lock()
 
 
-# --------------------------------------------------
-# MQTT callbacks
-# --------------------------------------------------
+# ==================================================
+# MQTT CALLBACKS
+# ==================================================
 
-def on_connect(client, userdata, flags, reason_code, properties):
+def on_connect(
+    client,
+    userdata,
+    flags,
+    reason_code,
+    properties
+):
 
     if reason_code != 0:
 
@@ -107,9 +140,15 @@ def on_connect(client, userdata, flags, reason_code, properties):
 
     mqtt_connected.set()
 
-    logger.info("Connected to MQTT broker")
+    logger.info(
+        "Connected to MQTT broker: %s",
+        BROKER
+    )
 
-    result, message_id = client.subscribe(TOPIC, qos=1)
+    result, message_id = client.subscribe(
+        TOPIC,
+        qos=1
+    )
 
     if result == mqtt.MQTT_ERR_SUCCESS:
 
@@ -121,12 +160,18 @@ def on_connect(client, userdata, flags, reason_code, properties):
     else:
 
         logger.error(
-            "Failed to subscribe: %s",
+            "Failed to subscribe to MQTT topic: %s",
             result
         )
 
 
-def on_disconnect(client, userdata, disconnect_flags, reason_code, properties):
+def on_disconnect(
+    client,
+    userdata,
+    disconnect_flags,
+    reason_code,
+    properties
+):
 
     mqtt_connected.clear()
 
@@ -146,15 +191,25 @@ def on_message(client, userdata, message):
 
     try:
 
-        # Decode incoming MQTT payload.
+        # ------------------------------------------
+        # Decode incoming MQTT message
+        # ------------------------------------------
+
         payload = message.payload.decode("utf-8")
 
         raw_reading = json.loads(payload)
 
-        # Validate telemetry.
-        reading = TelemetryReading.model_validate(raw_reading)
+        # ------------------------------------------
+        # Validate telemetry
+        # ------------------------------------------
 
-        validated_reading = reading.model_dump(mode="json")
+        reading = TelemetryReading.model_validate(
+            raw_reading
+        )
+
+        validated_reading = reading.model_dump(
+            mode="json"
+        )
 
         # ------------------------------------------
         # Store telemetry
@@ -162,21 +217,29 @@ def on_message(client, userdata, message):
 
         with data_lock:
 
-            latest_readings[reading.machine_id] = validated_reading
+            latest_readings[reading.machine_id] = (
+                validated_reading
+            )
 
-            reading_history.append(validated_reading)
+            reading_history.append(
+                validated_reading
+            )
 
         # ------------------------------------------
         # Broadcast telemetry
         # ------------------------------------------
 
-        manager.broadcast_from_thread(validated_reading)
+        manager.broadcast_from_thread(
+            validated_reading
+        )
 
         # ------------------------------------------
         # Evaluate equipment thresholds
         # ------------------------------------------
 
-        generated_alerts = evaluate_reading(validated_reading)
+        generated_alerts = evaluate_reading(
+            validated_reading
+        )
 
         # ------------------------------------------
         # Store and broadcast alerts
@@ -188,7 +251,9 @@ def on_message(client, userdata, message):
 
                 alert_history.append(alert)
 
-            manager.broadcast_alert_from_thread(alert)
+            manager.broadcast_alert_from_thread(
+                alert
+            )
 
             logger.warning(
                 "Equipment alert | Machine: %s | Metric: %s | Severity: %s",
@@ -202,7 +267,10 @@ def on_message(client, userdata, message):
             reading.machine_id
         )
 
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+    except (
+        UnicodeDecodeError,
+        json.JSONDecodeError
+    ) as error:
 
         logger.warning(
             "Invalid JSON telemetry: %s",
@@ -223,14 +291,37 @@ def on_message(client, userdata, message):
         )
 
 
-# --------------------------------------------------
-# MQTT client configuration
-# --------------------------------------------------
+# ==================================================
+# MQTT CLIENT CONFIGURATION
+# ==================================================
 
 mqtt_client = mqtt.Client(
     mqtt.CallbackAPIVersion.VERSION2,
     client_id="edgelink-fastapi"
 )
+
+
+# Configure authentication AFTER creating the client.
+
+if MQTT_USERNAME and MQTT_PASSWORD:
+
+    mqtt_client.username_pw_set(
+        MQTT_USERNAME,
+        MQTT_PASSWORD
+    )
+
+
+# Configure TLS for EMQX Cloud.
+
+if MQTT_USE_TLS:
+
+    mqtt_client.tls_set(
+        cert_reqs=ssl.CERT_REQUIRED,
+        tls_version=ssl.PROTOCOL_TLS_CLIENT
+    )
+
+
+# Register callbacks.
 
 mqtt_client.on_connect = on_connect
 
@@ -239,16 +330,17 @@ mqtt_client.on_disconnect = on_disconnect
 mqtt_client.on_message = on_message
 
 
-# Automatically retry connections after unexpected disconnects.
+# Automatically retry connections after unexpected disconnection.
+
 mqtt_client.reconnect_delay_set(
     min_delay=1,
     max_delay=30
 )
 
 
-# --------------------------------------------------
-# MQTT lifecycle management
-# --------------------------------------------------
+# ==================================================
+# MQTT LIFECYCLE MANAGEMENT
+# ==================================================
 
 def start_mqtt():
 
@@ -276,7 +368,9 @@ def start_mqtt():
 
             mqtt_client.loop_start()
 
-            logger.info("MQTT client started")
+            logger.info(
+                "MQTT client started"
+            )
 
         except Exception:
 
@@ -306,12 +400,14 @@ def stop_mqtt():
 
         mqtt_connected.clear()
 
-        logger.info("MQTT client stopped")
+        logger.info(
+            "MQTT client stopped"
+        )
 
 
-# --------------------------------------------------
-# Telemetry access functions
-# --------------------------------------------------
+# ==================================================
+# TELEMETRY ACCESS FUNCTIONS
+# ==================================================
 
 def get_latest_readings():
 
@@ -327,9 +423,9 @@ def get_reading_history():
         return list(reading_history)
 
 
-# --------------------------------------------------
-# Alert access functions
-# --------------------------------------------------
+# ==================================================
+# ALERT ACCESS FUNCTIONS
+# ==================================================
 
 def get_alert_history():
 

@@ -1,7 +1,13 @@
 
 import type { TelemetryReading } from "../types/telemetry";
 
-const WS_URL = "ws://127.0.0.1:8000/ws/telemetry";
+// Local development fallback.
+// In production, VITE_API_URL will point to the deployed FastAPI backend.
+const API_URL =
+  import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+
+// Convert HTTP/HTTPS into the corresponding WebSocket protocol.
+const WS_URL = `${API_URL.replace(/^http/, "ws").replace(/\/$/, "")}/ws/telemetry`;
 
 export function connectTelemetry(
   onMessage: (reading: TelemetryReading) => void,
@@ -20,7 +26,9 @@ export function connectTelemetry(
   socket.onmessage = (event) => {
     try {
       const reading: TelemetryReading = JSON.parse(event.data);
+
       console.log("Telemetry received:", reading);
+
       onMessage(reading);
     } catch (error) {
       console.error("Invalid telemetry message:", error);
@@ -33,6 +41,7 @@ export function connectTelemetry(
       event.code,
       event.reason
     );
+
     onStatusChange(false);
   };
 
